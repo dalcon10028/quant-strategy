@@ -50,13 +50,19 @@ def calculate_noise_ratio(open: float, high: float, low: float, close: float) ->
     return 1 - abs(open - close) / (high - low) if high - low != 0 else 0
 
 
-def volatility_breakout(df: pd.DataFrame, noise_ratio_period: int = 13, fee: float = 0.1) -> VolatilityBreakoutResult:
+def volatility_breakout(
+        df: pd.DataFrame,
+        noise_ratio_period: int = 13,
+        fee: float = 0.1,
+        moving_average_period: int = 5,
+) -> VolatilityBreakoutResult:
     """ Volatility breakout strategy.
 
     Args:
         df (pd.DataFrame): DataFrame with open, high, low, close, and volume data.
         noise_ratio_period (int): Noise ratio period days. (Default is 13 days).
         fee: Slippage and commission fee. (Default is 0.1%).
+        trailing_stop: Trailing stop loss. (Default is 5%).
 
     Returns:
         VolatilityBreakoutResult: Result of volatility breakout strategy.
@@ -69,11 +75,16 @@ def volatility_breakout(df: pd.DataFrame, noise_ratio_period: int = 13, fee: flo
     df['noise_ratio'] = df.apply(lambda x: calculate_noise_ratio(x['open'], x['high'], x['low'], x['close']), axis=1)
     df['average_noise_ratio'] = df['noise_ratio'].rolling(window=noise_ratio_period).mean()
 
-    # Add Target Price to DataFrame
+    # Add target price
     df['range'] = (df['high'] - df['low']).shift(1)
     df['next_open'] = df['open'].shift(-1)
     df['target_price'] = df['open'] + df['range'] * df['average_noise_ratio']
-    df['buy_signal'] = np.where(df['high'] > df['target_price'], True, False)
+
+    # # Add market timing
+    df['md'] = df['close'].rolling(window=moving_average_period).mean()
+
+    # Add buy signal
+    df['buy_signal'] = np.where((df['high'] > df['target_price']) & (df['high'] > df['md']), True, False)
 
     # Calculate Rate of Return
     df['ror'] = np.where(df['buy_signal'], df['next_open'] / df['target_price'] - fee / 100, 1)
@@ -103,12 +114,12 @@ def volatility_breakout(df: pd.DataFrame, noise_ratio_period: int = 13, fee: flo
 
 def main():
     # Load data
-    with open('time_series_233740_1day.json') as f:
+    with open('time_series_BTCUSD_1day.json') as f:
         data = json.load(f)
 
     # Convert data to DataFrame
     twelve_data_types = {'datetime': 'datetime64[ns]', 'open': 'float64', 'high': 'float64', 'low': 'float64',
-                         'close': 'float64', 'volume': 'float64'}
+                         'close': 'float64'}
     df = (pd.DataFrame(data['values'])
           .drop_duplicates()
           .astype(twelve_data_types)
@@ -116,7 +127,7 @@ def main():
           .set_index('datetime'))
 
     # Calculate volatility breakout strategy
-    result = volatility_breakout(df, noise_ratio_period=20, fee=0.1)
+    result = volatility_breakout(df, noise_ratio_period=20, fee=0.15)
 
     # dataframes to excel
     df.to_excel(f'volatility_breakout_{datetime.now().strftime("%Y%m%d%H%M%S")}.xlsx')
