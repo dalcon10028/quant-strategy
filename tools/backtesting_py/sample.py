@@ -1,9 +1,10 @@
-import numpy as np
-import pandas as pd
-import dataclasses as dc
 import json
-from datetime import datetime
+import logging
+import pandas as pd
+import numpy as np
+import dataclasses as dc
 
+from backtesting import Backtest, Strategy
 
 @dc.dataclass
 class VolatilityBreakoutResult:
@@ -111,10 +112,62 @@ def volatility_breakout(
         hpr=hpr
     )
 
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+stream_handler = logging.StreamHandler() ## 스트림 핸들러 생성
+logger.addHandler(stream_handler) ## 핸들러 등록
+
+def calculate_noise_ratio(open: float, high: float, low: float, close: float) -> float:
+    """ Calculate noise ratio.
+
+    Args:
+        open (float): Open price.
+        high (float): High price.
+        low (float): Low price.
+        close (float): Close price.
+
+    Returns:
+        float: Noise ratio.
+    """
+
+    return 1 - abs(open - close) / (high - low) if high - low != 0 else 0
 
 def main():
+
+    class VolatilityBreakoutStrategy(Strategy):
+        noise_ratio_period = 20
+        moving_average_period = 5
+        # buy_amount = 90_000_000
+
+        def init(self):
+            logger.info('init')
+            # 이동평균선 추가
+            pass
+
+        def next(self):
+            # 날짜와 데이터 출력
+            if not self.position and self.data['buy_signal'][-1]:
+                logger.info(self.position)
+                logger.info(f'buy {self.data.index[-1]}: {self.data["Close"][-1]} > {self.data["target_price"][-1]}')
+
+                # buy_amount로 가능한만큼 매수
+
+                # if self.buy_amount > self.equity:
+                #     self.buy(limit=self.data['target_price'][-1], size=self.equity // self.data['Close'][-1])
+                # else:
+                #     self.buy(limit=self.data['target_price'][-1], size=self.buy_amount // self.data['Close'][-1])
+
+                self.buy(limit=self.data['target_price'][-1])
+
+            # 다음날 시가에 매도
+            elif self.position:
+                logger.info(self.position)
+                logger.info(f'sell {self.data.index[-1]}: {self.data["Open"][-1]}')
+                self.position.close()
+                logger.info(self.position)
+
     # Load data
-    with open('../data/ohlcv/twelvedata/time_series_233740_1day.json') as f:
+    with open('../../data/ohlcv/twelvedata/time_series_233740_1day.json') as f:
         data = json.load(f)
 
     # Convert data to DataFrame
@@ -127,12 +180,20 @@ def main():
           .set_index('datetime'))
 
     # Calculate volatility breakout strategy
-    result = volatility_breakout(df, noise_ratio_period=20, fee=0.15)
+    result = volatility_breakout(df, noise_ratio_period=20, fee=0.0)
 
-    # dataframes to excel
-    df.to_excel(f'volatility_breakout_{datetime.now().strftime("%Y%m%d%H%M%S")}.xlsx')
+    # convert columes for backtesting
+    df.columns = ['Open', 'High', 'Low', 'Close', 'Volume', 'noise_ratio', 'average_noise_ratio', 'range', 'next_open', 'target_price', 'md', 'buy_signal', 'ror', 'hpr', 'dd']
 
-    print(result)
+    # Run backtest
+    bt = Backtest(df, VolatilityBreakoutStrategy, cash=100_000_000, commission=.0015)
+    # bt = Backtest(df, VolatilityBreakoutStrategy, cash=100_000_000, commission=.001)
+    stats = bt.run()
+    bt.plot()
+
+    print(stats)
+
+    # pretty print stats._trades
 
 
 if __name__ == '__main__':
